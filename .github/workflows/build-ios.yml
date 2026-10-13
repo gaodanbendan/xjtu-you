@@ -49,20 +49,45 @@ jobs:
         run: |
           set -e
           NAME="${{ github.event.inputs.build_name || 'XJTUYou-unsigned' }}"
-          rm -rf Payload
-          mkdir -p Payload
-          cp -r build/ios/iphoneos/Runner.app Payload/
-          # 打进去之前先看看架构和 App Group，便于排错
+          APP="build/ios/iphoneos/Runner.app"
+
+          # ---------- 1) 完整版：含课表小组件 + App Group ----------
+          # 用途：付费开发者账号签名、TrollStore 安装
+          rm -rf Payload && mkdir -p Payload
+          cp -r "$APP" Payload/
+          echo "--- 完整版信息 ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Payload/Runner.app/Info.plist || true
           /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName"  Payload/Runner.app/Info.plist || true
-          codesign -d --entitlements - Payload/Runner.app 2>/dev/null || true
+          codesign -d --entitlements - Payload/Runner.app 2>&1 || true
           zip -qr "${NAME}.ipa" Payload
           ls -la "${NAME}.ipa"
+
+          # ---------- 2) 无小组件版：剥离 App Group ----------
+          # 用途：免费 Apple ID 签名。免费证书拿不到 App Groups 能力，
+          #       带着它会直接安装失败（profile 与 entitlements 不匹配）。
+          rm -rf PayloadNoGroup && mkdir -p PayloadNoGroup
+          cp -r "$APP" PayloadNoGroup/
+          rm -rf PayloadNoGroup/Runner.app/PlugIns
+          cat > /tmp/nogroup.entitlements <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict/>
+          </plist>
+          PLIST
+          codesign -f -s - --entitlements /tmp/nogroup.entitlements PayloadNoGroup/Runner.app
+          echo "--- 无小组件版 entitlements ---"
+          codesign -d --entitlements - PayloadNoGroup/Runner.app 2>&1 || true
+          zip -qr "${NAME}-nogroup.ipa" PayloadNoGroup
+          ls -la "${NAME}-nogroup.ipa"
+
           echo "IPA_NAME=${NAME}" >> "$GITHUB_ENV"
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.inputs.build_name || 'XJTUYou-unsigned' }}
-          path: ${{ env.IPA_NAME }}.ipa
+          path: |
+            ${{ env.IPA_NAME }}.ipa
+            ${{ env.IPA_NAME }}-nogroup.ipa
           retention-days: 30
