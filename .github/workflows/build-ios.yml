@@ -14,8 +14,11 @@ on:
 
 jobs:
   build-ios:
-    # macos-14 = Apple Silicon (M1)，自带 Xcode 15.x + CocoaPods
-    runs-on: macos-14
+    # macos-26 = Apple Silicon + Xcode 26。
+    # 必须用 26：flutter_zxing 拖进来的 camera_avfoundation 0.10.3+1
+    # 用了 AVCaptureSession.wasInterruptedNotification / runtimeErrorNotification，
+    # 这两个是 iOS 26 SDK 的 API，macos-14/15 上的旧 SDK 编译不过。
+    runs-on: macos-26
 
     steps:
       - name: Checkout
