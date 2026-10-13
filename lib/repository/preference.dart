@@ -21,7 +21,7 @@ final GlobalKey<NavigatorState> splitViewKey = GlobalKey<NavigatorState>(
   debugLabel: "PDASplitKey",
 );
 final GlobalKey leftKey = GlobalKey();
-const String appId = "group.xyz.superbart.xdyou";
+const String appId = "group.com.gaodanbendan.xjtuYou";
 
 Catcher2Options catcherOptions = Catcher2Options(
   PageReportMode(showStackTrace: true),
