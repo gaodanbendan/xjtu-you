@@ -1,0 +1,98 @@
+// Copyright 2023-2025 BenderBlog Rodriguez and contributors
+// Copyright 2025 Traintime PDA authors.
+// SPDX-License-Identifier: MPL-2.0 OR Apache-2.0
+
+import 'package:material_ui/material_ui.dart';
+import 'package:styled_widget/styled_widget.dart';
+import 'package:watermeter/page/classtable/classtable_constant.dart';
+import 'package:watermeter/generated/translations.g.dart';
+
+/// The index row of the class table, shows the index of the day and the week.
+class ClassTableDateRow extends StatelessWidget {
+  final List<DateTime> dateList = [];
+  final double timeColumnWidth;
+  final double dayColumnWidth;
+
+  ClassTableDateRow({
+    super.key,
+    required DateTime firstDay,
+    required this.timeColumnWidth,
+    required this.dayColumnWidth,
+  }) {
+    /// Here, we get the first day of the week, and generate the date row.
+    dateList.addAll(List.generate(7, (i) => firstDay.add(Duration(days: i))));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      /// The height is determined by the content, so the text will not
+      /// overflow when the font scale is enlarged.
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.75),
+      child: Row(
+        children: [
+          Text(
+            context.t.classtable.month(month: dateList.first.month.toString()),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ).center().constrained(width: timeColumnWidth),
+          ...List.generate(
+            7,
+            (index) =>
+                WeekInfomation(time: dateList[index], width: dayColumnWidth),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The week index info, shows the day and the week.
+class WeekInfomation extends StatelessWidget {
+  final DateTime time;
+  final double width;
+  const WeekInfomation({super.key, required this.time, required this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    bool isToday =
+        (time.month == DateTime.now().month && time.day == DateTime.now().day);
+    return SizedBox(
+      width: width,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            getWeekString(context, time.weekday - 1),
+            style: TextStyle(
+              fontSize: 14,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          Text(
+                time.day.toString(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isToday ? FontWeight.bold : null,
+                  color: isToday
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurface,
+                ),
+              )
+              .center()
+              .constrained(width: 26, height: 20)
+              .decorated(
+                color: isToday
+                    ? Theme.of(context).colorScheme.onPrimary
+                    : Colors.transparent,
+              )
+              .clipRRect(all: 8),
+        ],
+      ),
+    );
+  }
+}

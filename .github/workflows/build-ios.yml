@@ -1,0 +1,68 @@
+name: Build unsigned iOS IPA
+
+# 手动触发；也可以在推送 tag 时触发
+on:
+  workflow_dispatch:
+    inputs:
+      build_name:
+        description: '产物文件名（不含 .ipa）'
+        required: false
+        default: 'XJTUYou-unsigned'
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-ios:
+    # macos-14 = Apple Silicon (M1)，自带 Xcode 15.x + CocoaPods
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          channel: stable
+          cache: true
+
+      - name: Flutter version & doctor
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Pod install
+        working-directory: ios
+        run: |
+          pod install --repo-update
+        continue-on-error: true
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Package into .ipa
+        run: |
+          set -e
+          NAME="${{ github.event.inputs.build_name || 'XJTUYou-unsigned' }}"
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          # 打进去之前先看看架构和 App Group，便于排错
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Payload/Runner.app/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName"  Payload/Runner.app/Info.plist || true
+          codesign -d --entitlements - Payload/Runner.app 2>/dev/null || true
+          zip -qr "${NAME}.ipa" Payload
+          ls -la "${NAME}.ipa"
+          echo "IPA_NAME=${NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.build_name || 'XJTUYou-unsigned' }}
+          path: ${{ env.IPA_NAME }}.ipa
+          retention-days: 30

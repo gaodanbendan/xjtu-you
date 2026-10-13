@@ -1,0 +1,37 @@
+name: Release for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+jobs:
+ build_windows:
+   runs-on: windows-latest
+   steps:
+      - uses: actions/checkout@v4
+      - name: Install Flutter
+        run: |
+          git submodule update --init --recursive
+
+      - name: Build for Windows
+        run: |
+          .flutter/bin/flutter.bat build windows --release
+
+      - name: Package Executable
+        run: 7z a -r -sse "..\..\..\..\..\build\app\watermeter-windows-release-amd64.zip" *
+        working-directory: build\windows\x64\runner\Release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Watermeter_Windows
+          path: build/app/watermeter-windows-release-amd64.zip
+     
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/app/watermeter-windows-release-amd64.zip
+          prerelease: false
+          tag_name: ${{ github.event.inputs.tag_name }}
+          token: ${{ secrets.RELEASE_TOKEN }}

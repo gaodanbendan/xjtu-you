@@ -1,0 +1,26 @@
+{
+  "mesonbuild.configureOnOpen": false,
+  "dart.flutterSdkPaths": [
+    ".fvm/flutter_sdk"
+  ],
+  "dart.analysisExcludedFolders": [
+    ".flutter"
+  ],
+  "search.exclude": {
+    "**/.fvm": true
+  },
+  "files.watcherExclude": {
+    "**/.fvm": true
+  },
+  "files.associations": {
+    "*.arb": "json"
+  },
+  "licenser.author": "Traintime PDA Authours, originally by BenderBlog Rodriguez",
+  "licenser.license": "MPLv2",
+  "licenser.useSPDXLicenseFormat": true,
+  "cmake.configureOnOpen": false,
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "python-envs.pythonProjects": [],
+  "dart.flutterSdkPath": ".fvm/versions/stable"
+}

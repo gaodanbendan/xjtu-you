@@ -1,0 +1,23 @@
+"XDYou" is a Free and Open Source personal data assistant for XDU students.
+
+This software is originally called "Traintime PDA".
+
+ - Both undergraduates and postgraduates are supported.
+ - View classtable with exam arrangement and experiment arrangement, also set your idol as the background.
+ - View sport related data: sport class detail and test score.
+ - Check your dorm's electricity balance and check your historical electricity usage.
+ - View your grade, easily calculate GPA and average score by choosing the subjects.
+ - View the exam schedule.
+ - View the due time of the borrowed books and query the details of the books in the library.
+ - View the bill you spent in the cafeteria, use the payment code if your card have money.
+ - Empty classroom check.
+ - Physics experiment schedule check and output it to iCalendar.
+ - School forum Ruisi support.
+ - Schoolnet Query.
+ - Attendance Query.
+ - Homepage arrangement notice widget.
+ - i18n support with Traditional Chinese and English.
+ - iLife789 support
+ - Notice before class.
+
+If you got some idea about it, contact me freely.
