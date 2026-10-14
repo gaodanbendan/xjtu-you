@@ -68,9 +68,11 @@ jobs:
           # ---------- 2) 无小组件版：剥离 App Group ----------
           # 用途：免费 Apple ID 签名。免费证书拿不到 App Groups 能力，
           #       带着它会直接安装失败（profile 与 entitlements 不匹配）。
-          rm -rf PayloadNoGroup && mkdir -p PayloadNoGroup
-          cp -r "$APP" PayloadNoGroup/
-          rm -rf PayloadNoGroup/Runner.app/PlugIns
+          # ⚠️ ipa 的顶层目录名必须恰好是 Payload，否则爱思助手等工具找不到 App。
+          rm -rf Payload
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          rm -rf Payload/Runner.app/PlugIns
           cat > /tmp/nogroup.entitlements <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -78,11 +80,13 @@ jobs:
           <dict/>
           </plist>
           PLIST
-          codesign -f -s - --entitlements /tmp/nogroup.entitlements PayloadNoGroup/Runner.app
+          codesign -f -s - --entitlements /tmp/nogroup.entitlements Payload/Runner.app
           echo "--- 无小组件版 entitlements ---"
-          codesign -d --entitlements - PayloadNoGroup/Runner.app 2>&1 || true
-          zip -qr "${NAME}-nogroup.ipa" PayloadNoGroup
+          codesign -d --entitlements - Payload/Runner.app 2>&1 || true
+          zip -qr "${NAME}-nogroup.ipa" Payload
           ls -la "${NAME}-nogroup.ipa"
+          echo "--- 顶层目录必须只有 Payload ---"
+          unzip -l "${NAME}-nogroup.ipa" | head -5
 
           echo "IPA_NAME=${NAME}" >> "$GITHUB_ENV"
 
