@@ -321,11 +321,24 @@ class _LoginWindowState extends State<LoginWindow> {
             "[login_window][login] "
             "Login failed with error: \n$e\nStacktrace is:\n$s",
           );
+          // 未知异常：连堆栈一起摆出来。
+          // iOS 上取不到日志，只有显示在界面上用户才能截图反馈，
+          // 这里只保留与本工程有关的帧，避免刷屏。
+          final frames = s
+              .toString()
+              .split('\n')
+              .where((String line) => line.contains('watermeter/'))
+              .take(4)
+              .map((String line) => line.trim())
+              .join('\n');
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                e.toString().substring(0, min(e.toString().length, 120)),
+                frames.isEmpty
+                    ? e.toString().substring(0, min(e.toString().length, 120))
+                    : '${e.runtimeType}: $e\n$frames',
               ),
+              duration: const Duration(seconds: 25),
             ),
           );
           showToast(context: context, msg: context.t.login.failedLoginOther);

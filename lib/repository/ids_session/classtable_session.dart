@@ -19,6 +19,7 @@ import 'package:watermeter/repository/logger.dart';
 import 'package:watermeter/repository/network_client.dart';
 import 'package:watermeter/repository/preference.dart' as pref;
 import 'package:watermeter/model/xidian_ids/classtable.dart';
+import 'package:watermeter/repository/ids_session/ids_auth_protocol.dart';
 import 'package:watermeter/repository/ids_session/ids_session.dart';
 import 'package:watermeter/repository/single_flight.dart';
 
@@ -356,15 +357,20 @@ class ClassTableSession extends IDSSession {
       "[getClasstable][getEhall] "
       "Fetch the day the semester begin.",
     );
-    String termStartDay = await dio
-        .post(
-          'https://jwxt.xjtu.edu.cn/jwapp/sys/wdkb/modules/jshkcb/cxjcs.do',
-          data: {
-            'XN': '${semesterCode.split('-')[0]}-${semesterCode.split('-')[1]}',
-            'XQ': semesterCode.split('-')[2],
-          },
-        )
-        .then((value) => value.data['datas']['cxjcs']['rows'][0]["XQKSRQ"]);
+    // 拆成两步：先拿响应再取值，不把「最终要赋给 String」的类型约束
+    // 传导到 dio 的泛型上（原因见 semester_session.dart 的长注释）。
+    final cxjcsResponse = await dio.post(
+      'https://jwxt.xjtu.edu.cn/jwapp/sys/wdkb/modules/jshkcb/cxjcs.do',
+      data: {
+        'XN': '${semesterCode.split('-')[0]}-${semesterCode.split('-')[1]}',
+        'XQ': semesterCode.split('-')[2],
+      },
+    );
+    final cxjcsRows = cxjcsResponse.data['datas']['cxjcs']['rows'];
+    if (cxjcsRows is! List || cxjcsRows.isEmpty) {
+      throw const IDSProtocolException('教务系统未返回学期起始日');
+    }
+    String termStartDay = cxjcsRows.first["XQKSRQ"].toString();
     log.info(
       "[getClasstable][getEhall] "
       "Will get $semesterCode which start at $termStartDay.",
