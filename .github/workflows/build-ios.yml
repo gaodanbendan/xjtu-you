@@ -58,10 +58,27 @@ jobs:
           # 用途：付费开发者账号签名、TrollStore 安装
           rm -rf Payload && mkdir -p Payload
           cp -r "$APP" Payload/
+          # flutter build --no-codesign 产出的是**完全未签名**的包（codesign 会报
+          # "code object is not signed at all"），entitlements 信息是空的。
+          # 这里显式补回 App Group，否则即便用付费账号重签，小组件也拿不到
+          # 共享容器，读不到主 App 写的课表数据。
+          cat > /tmp/full.entitlements <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+          	<key>com.apple.security.application-groups</key>
+          	<array>
+          		<string>group.com.gaodanbendan.xjtuYou</string>
+          	</array>
+          </dict>
+          </plist>
+          PLIST
+          codesign -f -s - --deep --entitlements /tmp/full.entitlements Payload/Runner.app
           echo "--- 完整版信息 ---"
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" Payload/Runner.app/Info.plist || true
           /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName"  Payload/Runner.app/Info.plist || true
-          codesign -d --entitlements - Payload/Runner.app 2>&1 || true
+          codesign -d --entitlements :- Payload/Runner.app 2>&1 || true
           zip -qr "${NAME}.ipa" Payload
           ls -la "${NAME}.ipa"
 
@@ -80,9 +97,9 @@ jobs:
           <dict/>
           </plist>
           PLIST
-          codesign -f -s - --entitlements /tmp/nogroup.entitlements Payload/Runner.app
+          codesign -f -s - --deep --entitlements /tmp/nogroup.entitlements Payload/Runner.app
           echo "--- 无小组件版 entitlements ---"
-          codesign -d --entitlements - Payload/Runner.app 2>&1 || true
+          codesign -d --entitlements :- Payload/Runner.app 2>&1 || true
           zip -qr "${NAME}-nogroup.ipa" Payload
           ls -la "${NAME}-nogroup.ipa"
           echo "--- 顶层目录必须只有 Payload ---"
