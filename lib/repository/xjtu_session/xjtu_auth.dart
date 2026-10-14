@@ -250,24 +250,67 @@ class XjtuAuth {
     log.info('[XjtuAuth] 登录成功，会话 cookie 已写入 NetworkCookieJars.ids');
   }
 
-  /// 从业务地址出发，跟随重定向落到 CAS 登录页，返回登录表单地址。
+  /// 教务 OAuth 客户端对应的 CAS 登录页地址。
   ///
-  /// 链路若在打转，先清掉会话 cookie 再走一次。打转基本都是上一轮失败
-  /// 登录留下的半成品 cookie 造成的（只剩 CAS 的 SESSION、没有教务的会话，
-  /// 服务端就会在两个地址之间来回 302，自己永远走不出来）。
+  /// 这串东西是从真实跳转里抄下来的，**不含任何随机量**（`state` 是在
+  /// org.xjtu.edu.cn 那一跳才生成的，不在 service 里），所以可以写死。
+  ///
+  /// 直接访问它有两个好处（实测：0 跳、200、170KB 完整登录页）：
+  /// 1. 绕过「教务首页 → 开放平台」两跳，从根上避开这条链路上可能出现的
+  ///    重定向打转（用户实测过 jwxt 首页被重复访问 4 次的自愈失败场景）；
+  /// 2. 快两跳。
+  ///
+  /// 若哪天真取不到登录表单，[_bootstrap] 会自动回退到从教务入口跟进来。
+  static const String xjtuCasLoginUrl =
+      '$xjtuCasOrigin/cas/login'
+      '?service=https%3A%2F%2Flogin.xjtu.edu.cn%2Fcas%2Foauth2.0%2F'
+      'callbackAuthorize%3Fclient_id%3D1675%26redirect_uri%3D'
+      'https%253A%252F%252Forg.xjtu.edu.cn%252Fopenplatform%252Foauth%252F'
+      'authorizesw%253Fredirect_uri%253Dhttps%253A%252F%252Fjwxt.xjtu.edu.cn'
+      '%252Fjwapp%252Fsys%252Fhomeapp%252Findex.do%26response_type%3Dcode%26'
+      'client_name%3DCasOAuthClient';
+
+  /// 拿到登录表单地址。
+  ///
+  /// 先直接访问 [xjtuCasLoginUrl]；拿不到登录表单再回退到「从教务首页跟随
+  /// 重定向」。回退路径若在打转，先清会话 cookie 再走一次。
   Future<String> _bootstrap() async {
-    Response<String> response;
+    // ---------- 首选：直接访问 CAS 登录页 ----------
     try {
-      response = await _follow(Uri.parse(jwxtHome));
+      final direct = await _follow(Uri.parse(xjtuCasLoginUrl));
+      final body = direct.data ?? '';
+      if (_extractInputValue(body, 'execution') != null) {
+        return direct.realUri.toString();
+      }
+      log.warning('[XjtuAuth] 直接访问 CAS 未拿到登录表单，回退到教务入口');
+    } on XjtuAuthException catch (e) {
+      log.warning('[XjtuAuth] 直接访问 CAS 失败（$e），回退到教务入口');
+    }
+
+    // ---------- 回退：从教务首页跟随 ----------
+    try {
+      return _finishBootstrap(await _follow(Uri.parse(jwxtHome)));
     } on XjtuRedirectLoopException catch (e) {
       log.warning('[XjtuAuth] 登录链路打转，清空会话 cookie 后重试一次');
       if (e.trail.isNotEmpty) {
         log.warning('[XjtuAuth] 打转链路：${e.trail.join(' → ')}');
       }
       await _clearCookies();
-      response = await _follow(Uri.parse(jwxtHome));
+      try {
+        return _finishBootstrap(await _follow(Uri.parse(jwxtHome)));
+      } on XjtuRedirectLoopException catch (e2) {
+        // 清完 cookie 还打转，基本可以断定是网络中间层在干预，
+        // 把链路抛给用户，比让他们对着「次数超限」猜要好。
+        throw XjtuAuthException(
+          '登录链路在打转，已清空会话 cookie 重试仍然失败。'
+          '请换一个网络（比如从 Wi-Fi 切到蜂窝数据）后再试。'
+          '链路：${e2.trail.join(' → ')}',
+        );
+      }
     }
+  }
 
+  String _finishBootstrap(Response<String> response) {
     final postUrl = response.realUri.toString();
     if (!postUrl.contains('/cas/login')) {
       // 已有有效会话
@@ -512,9 +555,12 @@ class XjtuAuth {
       trail.add('$code→$key');
 
       if (count >= _loopThreshold) {
+        // 把链路一起给出来 —— iOS 上取不到日志，这是唯一的现场证据。
+        final recent = trail.length > 6
+            ? trail.sublist(trail.length - 6)
+            : trail;
         throw XjtuRedirectLoopException(
-          '登录链路在打转（$key 重复 $count 次）。'
-          '通常是会话 cookie 失效或被网关拦截。',
+          '登录链路在打转（$key 重复 $count 次）：${recent.join(' → ')}',
           trail: List<String>.unmodifiable(trail),
         );
       }
