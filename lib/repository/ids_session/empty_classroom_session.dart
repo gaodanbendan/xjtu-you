@@ -1,146 +1,115 @@
 // Copyright 2023-2025 BenderBlog Rodriguez and contributors
 // Copyright 2025 Traintime PDA authors.
+// Copyright 2026 XJTU fork authors.
 // SPDX-License-Identifier: MPL-2.0
 
-import 'dart:convert';
+// 空闲教室查询（西安交通大学版）。
+//
+// 【对外接口刻意保持与西电版一致】：
+//   - getBuildingList() -> List<EmptyClassroomPlace>
+//   - searchData({buildingCode, date, semesterRange, semesterPart})
+//     -> List<EmptyClassroomData>（每间教室 11 个节次的占用情况）
+// 所以 lib/page/empty_classroom/ 下的界面一行都不用改。
+//
+// 内部实现完全换掉了：西电走 `sys/kxjas/modules/kxjas/cxjsqk.do`，一次返回
+// 全天占用表；西交走 `sys/kxjas/modules/kxjscx/cxkxjs.do`，一次只能回答一个
+// 节次区间，全天表格由 11 个并发查询反推。细节见 xjtu_empty_room.dart。
+//
+// 当前只实现兴庆校区（用户 2026-10-14 确认）。要加别的校区，把 campusCode
+// 换成对应代码即可 —— 校区字典：
+//   兴庆=1  雁塔=2  曲江=3  苏州=4  创新港=5  海南国际学院=8
+
 import 'dart:developer' as developer;
+
 import 'package:watermeter/model/xidian_ids/empty_classroom.dart';
 import 'package:watermeter/repository/ids_session/ids_session.dart';
-import 'package:watermeter/repository/ids_session/slider_captcha_client.dart';
+import 'package:watermeter/repository/logger.dart';
+import 'package:watermeter/repository/xjtu_session/xjtu_empty_room.dart';
 
-/// 空闲教室查询 4768402106681759
 class EmptyClassroomSession extends IDSSession {
-  String baseUrl = "https://jwxt.xjtu.edu.cn/jwapp/sys/kxjas/modules/kxjas";
-  String target =
-      "https://jwxt.xjtu.edu.cn/jwapp/sys/kxjas/*default/index.do";
+  /// 兴庆校区。
+  static const String campusCode = XjtuEmptyRoomClient.xingqingCampusCode;
 
-  Map<String, String> buildingSetting(String jxldm) => {
-    "name": "JXLDM",
-    "caption": "教学楼代码",
-    "builder": "equal",
-    "linkOpt": "AND",
-    "value": jxldm,
-  };
+  /// 空闲教室页面地址。西交的这个页面挂在 kxjas 下。
+  static const String target =
+      '${XjtuEmptyRoomClient.origin}/jwapp/sys/kxjas/*default/index.do';
 
-  Map<String, String> semesterSetting(String xnxqdm) => {
-    "name": "XNXQDM",
-    "value": xnxqdm,
-    "linkOpt": "AND",
-    "builder": "equal",
-  };
+  XjtuEmptyRoomClient get _client => XjtuEmptyRoomClient(dioNoOfflineCheck);
 
-  Map<String, dynamic> weekCountSetting(dynamic weekCount) => {
-    "name": "ZC",
-    "value": weekCount,
-    "linkOpt": "AND",
-    "builder": "equal",
-  };
-
-  Map<String, dynamic> weekDaySetting(dynamic weekDay) => {
-    "name": "ZC",
-    "value": weekDay,
-    "linkOpt": "AND",
-    "builder": "equal",
-  };
-
-  List<Map<String, String>> classroomSetting(String mcOrdm) => [
-    {
-      "name": "JASDM",
-      "caption": "教室代码",
-      "builder": "include",
-      "linkOpt": "AND",
-      "value": mcOrdm,
-    },
-    {
-      "name": "JASMC",
-      "caption": "教室名称",
-      "builder": "include",
-      "linkOpt": "OR",
-      "value": mcOrdm,
-    },
-  ];
-
-  /// This is the first function we need to execute
+  /// This is the first function we need to execute.
+  ///
+  /// 只返回兴庆校区的教学楼。
   Future<List<EmptyClassroomPlace>> getBuildingList() async {
-    List<EmptyClassroomPlace> toReturn = [];
-    developer.log("Ready to login the system.", name: "Ehall emptyClassroom");
+    developer.log('Ready to login the system.', name: 'XJTU emptyClassroom');
     await checkAndLogin(
-      target: "https://jwxt.xjtu.edu.cn/appShow?appId=4768402106681759",
-      sliderCaptcha: (String cookieStr) =>
-          SliderCaptchaClientProvider(cookie: cookieStr).solve(),
-    ).then((location) async {
-      await followIDSRedirects(initialLocation: location, client: dio);
-    });
-    var data = await dio
-        .post("$baseUrl/jxlcx.do", data: {"*order": "+XXXQDM,+PX,+JXLDM"})
-        .then((value) => value.data["datas"]["jxlcx"]["rows"]);
-    for (var i in data) {
-      toReturn.add(EmptyClassroomPlace(code: i["JXLDM"], name: i["JXLJC"]));
-    }
-    return toReturn;
+      target: target,
+      // 西交不使用滑块验证码，这个回调不会被调用。
+      sliderCaptcha: (String _) async {},
+    );
+
+    // 空闲教室只在「学生」身份下可用，在「移动应用学生」身份下查不到数据。
+    await _client.ensureStudentRole();
+
+    final buildings = await _client.fetchBuildings(campusCode: campusCode);
+    log.info('[XJTU emptyClassroom] 兴庆校区教学楼 ${buildings.length} 栋');
+
+    return buildings
+        .map(
+          (XjtuBuilding building) => EmptyClassroomPlace(
+            code: building.id,
+            name: building.name,
+          ),
+        )
+        .toList();
   }
 
-  /// The function of search the buildings inside buildingCode.
-  /// params:
-  ///   [buildingCode]: the code defined in [getBuildingList].
-  ///   [date]: A date string with [yyyy-mm-dd] pattern.
-  ///   [semesterRange]: A year range in string. e.g. [2022-2023]
-  ///   [semesterPart]: The part in the semester. Only allow 1 and 2
+  /// 查询某栋教学楼在某天的教室占用情况。
+  ///
+  /// 参数沿用西电版签名：
+  /// - [buildingCode] 教学楼代码，来自 [getBuildingList]。
+  /// - [date] `yyyy-MM-dd` 格式的日期。
+  /// - [semesterRange] / [semesterPart] 在西交接口里没有对应参数，忽略。
   Future<List<EmptyClassroomData>> searchData({
     required String buildingCode,
     required String date,
     required String semesterRange,
     required String semesterPart,
   }) async {
-    (dynamic, dynamic) dateData = await dio
-        .post(
-          "$baseUrl/rqzhzcjc.do",
-          data: {"RQ": date, "XN": semesterRange, "XQ": semesterPart},
-        )
-        .then(
-          (value) => (
-            value.data["datas"]["rqzhzcjc"]["ZC"],
-            value.data["datas"]["rqzhzcjc"]["XQJ"],
+    // 11 个节次并发查询，实测约 0.5 秒。
+    final byJie = await _client.fetchRoomsInDay(
+      campusCode: campusCode,
+      buildingCode: buildingCode,
+      date: date,
+    );
+
+    // 汇总全天出现过的教室。全天满课的教室不会出现在任何一节里，
+    // 因此自然被排除掉 —— 它本来也不是「空闲教室」。
+    final names = <String>{};
+    for (final rooms in byJie.values) {
+      for (final room in rooms) {
+        names.add(room.name);
+      }
+    }
+
+    final sorted = names.toList()..sort();
+    log.info(
+      '[XJTU emptyClassroom] $date $buildingCode：'
+      '${sorted.length} 间教室有休息时段',
+    );
+
+    return sorted
+        .map(
+          (String name) => EmptyClassroomData(
+            name: name,
+            isUsed: List<bool>.generate(
+              11,
+              // 该节次的空闲列表里没有它，就说明那一节被占用。
+              (int index) => !(byJie[index + 1] ?? const <XjtuEmptyRoomInfo>[])
+                  .any((XjtuEmptyRoomInfo room) => room.name == name),
+              growable: false,
+            ),
           ),
-        );
-
-    List<EmptyClassroomData> toReturn = [];
-
-    await dio
-        .post(
-          "$baseUrl/cxjsqk.do",
-          data: {
-            "XNXQDM": "$semesterRange-$semesterPart",
-            "ZC": dateData.$1,
-            "XQ": dateData.$2,
-            "querySetting": jsonEncode([
-              buildingSetting(buildingCode),
-              semesterSetting("$semesterRange-$semesterPart"),
-              weekCountSetting(dateData.$1),
-              weekDaySetting(dateData.$2),
-            ]),
-            '*order': "+LC,+JASMC",
-            'pageSize': 999,
-            'pageNumber': 1,
-          },
         )
-        .then((value) {
-          for (var i in value.data["datas"]["cxjsqk"]["rows"]) {
-            toReturn.add(
-              EmptyClassroomData(
-                name: i["JASMC"]
-                    .toString()
-                    .replaceAll(RegExp(r'[(（]'), "\n")
-                    .replaceAll(RegExp(r'[)）]'), ""),
-                isUsed: List.generate(
-                  11,
-                  (index) => i["JC${index + 1}"].toString().contains("1_"),
-                  growable: false,
-                ),
-              ),
-            );
-          }
-        });
-    return toReturn;
+        .toList();
   }
 }
