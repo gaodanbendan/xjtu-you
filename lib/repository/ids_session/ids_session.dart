@@ -184,6 +184,20 @@ class IDSSession {
       throw const LoginFailedException(msg: '请先填写学号与密码');
     }
 
+    // 登录前清掉上一轮残留的会话 cookie。
+    //
+    // login_window 那条「用户手动点登录」的路径自己清过，但开机自动登录、
+    // 首页卡片、空闲教室这些走 checkAndLogin 的路径不会。带着半成品 cookie
+    // 去走 OAuth 链，服务端会在两个地址之间来回 302，用户看到的就是
+    // 「重定向次数超过上限，登录链路可能已变更」。
+    try {
+      await NetworkCookieJars.ids.deleteAll();
+      log.info('[IDSSession] 登录前已清空会话 cookie');
+    } catch (e) {
+      // 清不掉也不中断登录流程
+      log.warning('[IDSSession] 清空会话 cookie 失败：$e');
+    }
+
     loginState = IDSLoginState.requesting;
     onResponse?.call(10, LoginProcessStep.readyPage);
 

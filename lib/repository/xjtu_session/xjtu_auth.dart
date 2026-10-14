@@ -85,13 +85,34 @@ class XjtuNeedMfaException extends XjtuAuthException {
   const XjtuNeedMfaException(super.message);
 }
 
+/// 重定向链路在打转（同一个地址反复出现）。
+///
+/// 与「跳数用尽」区分开，因为两者的处理方式不同：
+/// 打转几乎都是会话 cookie 脏了，清掉 cookie 重走一次通常就好了。
+class XjtuRedirectLoopException extends XjtuAuthException {
+  const XjtuRedirectLoopException(super.message, {this.trail = const <String>[]});
+
+  /// 出错时的重定向链路，便于排查。
+  final List<String> trail;
+}
+
 /// 统一身份认证客户端。进程内共用一个实例。
 class XjtuAuth {
   XjtuAuth._();
 
   static final XjtuAuth instance = XjtuAuth._();
 
-  static const int _maxRedirects = 14;
+  /// 单次请求允许跟随的最大跳数。
+  ///
+  /// 正常链路很短（实测：未登录 3 跳落到 CAS 登录页，登录成功后再 4 跳回教务，
+  /// 合计 7 跳左右）。留到 20 是为了容忍学校加了网关 / WebVPN 之类的额外跳转。
+  static const int _maxRedirects = 20;
+
+  /// 同一个 host+path 出现多少次就判定为打转。
+  ///
+  /// 不能用「完整 URL 相同」来判断：西交的 OAuth 链每跳都带一个随机的
+  /// `state`，地址每轮都不一样，只有 host+path 是稳定的。
+  static const int _loopThreshold = 4;
 
   /// 需要用户输入短信验证码时调用，返回验证码；返回 null 视为取消登录。
   static XjtuMfaCodeProvider? mfaCodeProvider;
@@ -230,14 +251,38 @@ class XjtuAuth {
   }
 
   /// 从业务地址出发，跟随重定向落到 CAS 登录页，返回登录表单地址。
+  ///
+  /// 链路若在打转，先清掉会话 cookie 再走一次。打转基本都是上一轮失败
+  /// 登录留下的半成品 cookie 造成的（只剩 CAS 的 SESSION、没有教务的会话，
+  /// 服务端就会在两个地址之间来回 302，自己永远走不出来）。
   Future<String> _bootstrap() async {
-    final response = await _follow(Uri.parse(jwxtHome));
+    Response<String> response;
+    try {
+      response = await _follow(Uri.parse(jwxtHome));
+    } on XjtuRedirectLoopException catch (e) {
+      log.warning('[XjtuAuth] 登录链路打转，清空会话 cookie 后重试一次');
+      if (e.trail.isNotEmpty) {
+        log.warning('[XjtuAuth] 打转链路：${e.trail.join(' → ')}');
+      }
+      await _clearCookies();
+      response = await _follow(Uri.parse(jwxtHome));
+    }
+
     final postUrl = response.realUri.toString();
     if (!postUrl.contains('/cas/login')) {
       // 已有有效会话
       _loggedIn = true;
     }
     return postUrl;
+  }
+
+  /// 清空会话 cookie。失败不致命，只是这次登录可能还是走不通。
+  static Future<void> _clearCookies() async {
+    try {
+      await NetworkCookieJars.ids.deleteAll();
+    } catch (e) {
+      log.warning('[XjtuAuth] 清空会话 cookie 失败：$e');
+    }
   }
 
   /// 二次认证检测：返回是否需要以及本次认证的 state。
@@ -418,6 +463,9 @@ class XjtuAuth {
 
   /// 手动逐跳跟随重定向。idsDio 已关闭自动重定向，这里保证每一跳的
   /// Set-Cookie 都能被 CookieManager 捕获。
+  ///
+  /// 出错时会把链路塞进异常消息里 —— iOS 上取日志不方便，让用户截个图
+  /// 就能看出链子在哪一段打转。
   Future<Response<String>> _follow(
     Uri start, {
     String method = 'GET',
@@ -426,6 +474,10 @@ class XjtuAuth {
     var current = start;
     var currentMethod = method;
     Map<String, dynamic>? currentData = data;
+
+    // 链路记录与打转计数。key 用 host+path，因为 OAuth 每跳的 state 都变。
+    final trail = <String>[];
+    final seen = <String, int>{};
 
     for (var hop = 0; hop <= _maxRedirects; hop++) {
       final response = await _dio.requestUri<String>(
@@ -451,13 +503,33 @@ class XjtuAuth {
       }
 
       final next = response.realUri.resolve(location.toString());
-      current = next.scheme == 'http' ? next.replace(scheme: 'https') : next;
+      final normalized =
+          next.scheme == 'http' ? next.replace(scheme: 'https') : next;
+
+      final key = '${normalized.host}${normalized.path}';
+      final count = (seen[key] ?? 0) + 1;
+      seen[key] = count;
+      trail.add('$code→$key');
+
+      if (count >= _loopThreshold) {
+        throw XjtuRedirectLoopException(
+          '登录链路在打转（$key 重复 $count 次）。'
+          '通常是会话 cookie 失效或被网关拦截。',
+          trail: List<String>.unmodifiable(trail),
+        );
+      }
+
+      current = normalized;
       if (code == 302 || code == 303) {
         currentMethod = 'GET';
         currentData = null;
       }
     }
-    throw const XjtuAuthException('重定向次数超过上限，登录链路可能已变更');
+
+    throw XjtuAuthException(
+      '登录重定向超过 $_maxRedirects 跳，登录链路可能已变更。'
+      '链路：${trail.join(' → ')}',
+    );
   }
 
   // ---------------------------------------------------------------- 解析
