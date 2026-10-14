@@ -136,18 +136,32 @@ class XjtuAuth {
     final postUrl = await _bootstrap();
     log.info('[XjtuAuth] 登录表单：$postUrl');
 
+    // 已经是登录态（_bootstrap 落到的不是 CAS 登录页）就直接收工。
+    // 否则会拿教务首页当登录表单去 POST 一堆无意义字段。
+    if (!postUrl.contains('/cas/login')) {
+      log.info('[XjtuAuth] 检测到已有有效会话，跳过认证流程');
+      _loggedIn = true;
+      return;
+    }
+
     final execution = _extractInputValue(await _fetchText(postUrl), 'execution');
     final passwordValue = await _encryptPassword(password, postUrl);
 
-    // 二次认证检测：一次 /cas/mfa/detect 同时拿到 need 与 state
+    // 二次认证检测：一次 /cas/mfa/detect 同时拿到 need 与 state。
+    //
+    // ⚠️ 关键：不管 need 是真是假，detect 返回的 state 都必须原样回传到登录表单。
+    //    服务端在 detect 时会把「本次登录的 MFA 会话」挂在 state 上，登录表单不带
+    //    这个 state 就会直接判 MFA failed（与密码是否正确无关）。
+    //    这一点对齐 XJTUToolBox/auth/new_login.py：它同样无条件保存 mfa_context.state。
     String mfaState = '';
     final mfa = await _detectMfa(username, passwordValue, id, postUrl);
+    mfaState = mfa.state ?? '';
     if (mfa.need && mfa.state != null) {
       await _requestMfaCode(mfa.state!);
-      mfaState = mfa.state!;
     }
+    log.info('[XjtuAuth] MFA 检测：need=${mfa.need} mfaState=${mfaState.isEmpty ? '（空）' : '已获取'}');
 
-    final trustAgentValue = mfaState.isEmpty ? '' : (trustAgent ? 'true' : 'false');
+    final trustAgentValue = mfa.need ? (trustAgent ? 'true' : 'false') : '';
 
     final response = await _follow(
       Uri.parse(postUrl),
@@ -171,12 +185,12 @@ class XjtuAuth {
     final body = response.data ?? '';
     if (response.statusCode == 401) {
       throw XjtuPasswordWrongException(
-        _extractAlertMessage(body) ?? '用户名或密码错误',
+        _localize(_extractAlertMessage(body)) ?? '用户名或密码错误',
       );
     }
     final alert = _extractAlertMessage(body);
     if (alert != null) {
-      throw XjtuAuthException(alert);
+      throw XjtuAuthException(_localize(alert)!);
     }
     if (_isSafetyVerifyPage(body)) {
       throw const XjtuAuthException('需要完成安全二次认证，请在浏览器登录一次后再试');
@@ -252,10 +266,14 @@ class XjtuAuth {
     );
     final map = _asMap(response.data);
     final data = map['data'];
-    if (data is! Map) return const _MfaProbe(need: false, state: null);
+    // 解析不出来就报错，绝不能静默降级成「不需要 MFA」——
+    // 那会让我们漏带 mfaState，服务端只会回一句 MFA failed，反而更难查。
+    if (data is! Map || data['state'] == null) {
+      throw const XjtuAuthException('服务器在 MFA 检测时返回了无法解析的信息');
+    }
     return _MfaProbe(
       need: data['need'] == true || data['need'] == 'true',
-      state: data['state']?.toString(),
+      state: data['state'].toString(),
     );
   }
 
@@ -267,6 +285,11 @@ class XjtuAuth {
       options: Options(responseType: ResponseType.plain),
     );
     final initMap = _asMap(init.data);
+    if (initMap['code'] != null && initMap['code'] != 0) {
+      throw XjtuAuthException(
+        initMap['message']?.toString() ?? '无法获取绑定手机信息',
+      );
+    }
     final data = initMap['data'];
     if (data is! Map || data['gid'] == null) {
       throw const XjtuAuthException('无法获取绑定手机信息');
@@ -304,6 +327,18 @@ class XjtuAuth {
       throw XjtuAuthException(
         validMap['message']?.toString() ?? '验证码校验失败',
       );
+    }
+    // code == 0 并不代表通过：必须看 data.status == 2。
+    // 这一点同样对齐 XJTUToolBox —— 它专门校验了 status，缺了会把错码当成功，
+    // 然后带着未通过 MFA 的会话去提交登录表单，服务端只回一句 MFA failed。
+    final validData = validMap['data'];
+    if (validData is Map) {
+      final status = validData['status'];
+      if (status != null && status.toString() != '2') {
+        throw XjtuAuthException(
+          validMap['message']?.toString() ?? '验证码错误，请重新输入',
+        );
+      }
     }
   }
 
@@ -466,6 +501,21 @@ class XjtuAuth {
     } catch (_) {
       return null;
     }
+  }
+
+  /// 服务端错误提示汉化。认不出来的原文照旧返回，方便排查。
+  static const Map<String, String> _messageZh = <String, String>{
+    'MFA failed': '二次验证未通过。请重新登录；若弹出短信验证码，请完整输入后再提交。',
+    'Invalid captcha': '图形验证码错误',
+    'Username or password is incorrect': '学号或密码错误',
+    'Account is locked': '账号已被锁定，请稍后再试',
+    'Account is disabled': '账号已被停用',
+  };
+
+  static String? _localize(String? raw) {
+    if (raw == null) return null;
+    final key = raw.trim();
+    return _messageZh[key] ?? raw;
   }
 
   static List<XjtuAccountChoice> _extractAccountChoices(String html) {
