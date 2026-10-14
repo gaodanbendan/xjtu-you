@@ -540,7 +540,7 @@ struct ClasstableWidgetEntryView : View {
         // Generate title screen
         var title = NSLocalizedString("title", comment: "Title of the widget")
         if (widgetFamily != .systemSmall) {
-            title = "XDYou ".appending(title)
+            title = "仙交有你 ".appending(title)
         }
         
         // Date formatter

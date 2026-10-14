@@ -5,7 +5,7 @@
     <application android:name="${applicationName}"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="XDYou"
+        android:label="仙交有你"
         android:networkSecurityConfig="@xml/network_security_config"
         tools:replace="android:label">
 

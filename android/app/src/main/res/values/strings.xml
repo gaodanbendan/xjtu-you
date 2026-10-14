@@ -2,7 +2,7 @@
 <resources>
     <string name="widget_classtable_description">Time Arrangement Widget</string>
     <string name="widget_classtable_date_loading">Loading…</string>
-    <string name="widget_classtable_title">XDYou Arrangements</string>
+    <string name="widget_classtable_title">仙交有你 Arrangements</string>
     <string name="widget_classtable_no_arrangement">No arrangement</string>
     <string name="classtable_day_switcher_decription">ClassTable Day Switcher</string>
     <string name="widget_classtable_on_holiday">On Holiday</string>
